@@ -1,4 +1,3 @@
-# 事务#
 
 
 ##数据结构
@@ -210,15 +209,127 @@ Redis 对字典的哈希表执行 rehash 的步骤如下:
 
 渐进式的 rehash 避免了集中式 rehash 带来的庞大计算量和内存操作。
 
+###跳跃表（Skip List）
+
+用于有序集合键
+
+####源码
+
+```C
+/* ZSETs use a specialized version of Skiplists */
+/*
+ * 跳跃表节点
+ */
+typedef struct zskiplistNode {
+
+    // 成员对象
+    robj *obj;
+
+    // 分值
+    double score;
+
+    // 后退指针
+    struct zskiplistNode *backward;
+
+    // 层
+    struct zskiplistLevel {
+
+        // 前进指针
+        struct zskiplistNode *forward;
+
+        // 跨度
+        unsigned int span;
+
+    } level[];
+
+} zskiplistNode;
+
+/*
+ * 跳跃表
+ */
+typedef struct zskiplist {
+
+    // 表头节点和表尾节点
+    struct zskiplistNode *header, *tail;
+
+    // 表中节点的数量
+    unsigned long length;
+
+    // 表中层数最大的节点的层数
+    int level;
+
+} zskiplist;
+```
+
+###整数集合（Int Set）
+
+集合只包含整数元素，并且集合元素的数量不多时，使用整数集合。
+
+####源码
+```c
+typedef struct intset {
+    
+    // 编码方式
+    uint32_t encoding;
+
+    // 集合包含的元素数量
+    uint32_t length;
+
+    // 保存元素的数组
+    int8_t contents[];
+
+} intset;
+```
+####升级
+encoding具有三种编码方式，分别为
+```c
+#define INTSET_ENC_INT16 (sizeof(int16_t))
+#define INTSET_ENC_INT32 (sizeof(int32_t))
+#define INTSET_ENC_INT64 (sizeof(int64_t))
+```
+分别存储16位，32位，64位的整数类型。编码方式取决于最大值所需位数。但只支持因为新增最大值导致的位数升级，而不支持自动降级。
+
+###压缩列表（Zip List）
+当列表键或哈希键只有小整数值和短字符串时，使用压缩列表实现。
+
+
+####总体编码
+<zlbytes><zltail><zllen><entry><entry><zlend>
+
+- zlbytes：存储一个无符号整数，固定四个字节长度，用于存储压缩列表所占用的字节，当重新分内存的时候使用，不需要遍历整个列表来计算内存大小。
+
+- zltail：存储一个无符号整数，固定四个字节长度，代表指向列表尾部的偏移量，偏移量是指压缩列表的起始位置到指定列表节点的起始位置的距离。
+
+- zllen：压缩列表包含的节点个数，固定两个字节长度，源码中指出当节点个数大于2^16-2个数的时候，该值将无效，此时需要遍历列表来计算列表节点的个数。
+
+- entryX：列表节点区域，长度不定，由列表节点紧挨着组成。
+
+- zlend：一字节长度固定值为255，用于表示列表结束。
+
+
+####列表元素编码
+
+<previous_entry_length><encoding><content>
+
+- previous length
+用于存储上一个节点的长度，因此压缩列表可以从尾部向头部遍历，即当前节点位置减去上一个节点的长度即得到上一个节点的起始位置。previous length的长度可能是1个字节或者是5个字节，如上一个节点的长度小于254，则该节点只需要一个字节就可以表示前一个节点的长度了，如果前一个节点的长度大于等于254，则previous length的第一个字节为254，后面用四个字节表示当前节点前一个节点的长度。这么做很有效地减少了内存的浪费。
+
+- encoding
+节点的encoding保存的是节点的content的内容类型以及长度，encoding类型一共有两种，一种字节数组一种是整数，encoding区域长度为1字节、2字节或者5字节长。
+
+- content
+content区域用于保存节点的内容，节点内容类型和长度由encoding决定。
+
+压缩列表并不是对数据利用某种算法进行压缩，而是将数据按照一定规则编码在一块连续的内存区域，目的是节省内存。
+
+
+###对象
 
 
 
 
-
-
-
-
-## 含义##
+##事务
+###含义
 
 事务提供了一种将多个命令请求打包，然后一次性、按顺序地执行多个命令的机制，并且在事务执行期间，服务器不会中断事务而去执行其他客户端的命令请求，它会将事务中的所有命令都执行完毕，然后才去处理其他客户端的命令请求。由于redis 是单线程来处理所有client 的请求的所以做到这点是很容易的。
 
